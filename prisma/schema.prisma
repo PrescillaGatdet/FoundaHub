@@ -1,0 +1,717 @@
+// Platform data model.
+//
+// Eight systems behind eleven surfaces:
+//   Q&A · Advisors (mentors + experts) · Groups · Events
+//   Content (blog + training) · Companies (portfolio + jobs) · Partners · Funding
+//
+// SQLite has no native enums or array columns, so enum-ish fields are `String`
+// with the allowed values listed in a comment, and lists use join tables.
+// Every one of these is portable to Postgres unchanged.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  email     String?  @unique
+  name      String
+  role      String   @default("Founder") // Founder, Operator, Mentor, Investor
+  headline  String?
+  bio       String?
+  location  String?
+  website   String?
+  avatar    String   @default("🚀") // emoji avatar
+  color     String   @default("#6366f1")
+  isStaff   Boolean  @default(false)
+  plan      String   @default("free") // free | pro
+  createdAt DateTime @default(now())
+
+  questions      Question[]
+  answers        Answer[]
+  comments       Comment[]
+  votes          Vote[]
+  bookmarks      Bookmark[]
+  advisorProfile AdvisorProfile?
+  bookings       Booking[]        @relation("MenteeBookings")
+  reviews        Review[]         @relation("ReviewAuthor")
+  rsvps          EventRsvp[]
+  ownedGroups    Group[]          @relation("GroupOwner")
+  memberships    GroupMembership[]
+  groupPosts     GroupPost[]
+  groupComments  GroupComment[]
+  posts          Post[]
+  courses        Course[]         @relation("CourseInstructor")
+  enrollments    Enrollment[]
+  companies      Company[]        @relation("CompanyOwner")
+  postedJobs     Job[]            @relation("JobPoster")
+  jobApplications JobApplication[]
+  fundingApps    FundingApplication[]
+  offerClaims    OfferClaim[]
+  conversations  Conversation[]
+  notifications  Notification[]   @relation("NotificationRecipient")
+  actedOn        Notification[]   @relation("NotificationActor")
+}
+
+// ---------------------------------------------------------------------------
+// Shared taxonomy
+// ---------------------------------------------------------------------------
+
+model Tag {
+  id    String @id @default(cuid())
+  name  String @unique
+  slug  String @unique
+  kind  String @default("topic") // tool | topic | industry
+  color String @default("#6366f1")
+
+  questions QuestionTag[]
+  posts     PostTag[]
+  groups    GroupTag[]
+  advisors  AdvisorTag[]
+}
+
+// ---------------------------------------------------------------------------
+// Q&A
+// ---------------------------------------------------------------------------
+
+model Question {
+  id               String   @id @default(cuid())
+  title            String
+  body             String
+  votes            Int      @default(0)
+  views            Int      @default(0)
+  status           String   @default("open") // open | answered | closed
+  acceptedAnswerId String?
+  createdAt        DateTime @default(now())
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  answers  Answer[]
+  comments Comment[]
+  tags     QuestionTag[]
+  voteLog  Vote[]
+}
+
+model QuestionTag {
+  questionId String
+  tagId      String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, tagId])
+}
+
+model Answer {
+  id        String   @id @default(cuid())
+  body      String
+  votes     Int      @default(0)
+  accepted  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  comments Comment[]
+  voteLog  Vote[]
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  body      String
+  createdAt DateTime @default(now())
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  questionId String?
+  question   Question? @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answerId   String?
+  answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: Cascade)
+}
+
+// One row per (user, target) to prevent double voting.
+model Vote {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  questionId String?
+  question   Question? @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answerId   String?
+  answer     Answer?   @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, questionId])
+  @@unique([userId, answerId])
+}
+
+model Bookmark {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityType String // question | post | job | event | course
+  entityId   String
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Advisors — mentors (free offerings) and expert consultants (paid offerings)
+// ---------------------------------------------------------------------------
+
+model AdvisorProfile {
+  id                  String  @id @default(cuid())
+  userId              String  @unique
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  headline            String
+  bio                 String
+  company             String?
+  yearsExperience     Int     @default(5)
+  timezone            String  @default("UTC")
+  isAcceptingBookings Boolean @default(true)
+  ratingAvg           Float   @default(0)
+  reviewCount         Int     @default(0)
+
+  expertise  AdvisorTag[]
+  offerings  Offering[]
+  slots      AvailabilitySlot[]
+  bookings   Booking[]
+  reviews    Review[]
+}
+
+model AdvisorTag {
+  advisorId String
+  tagId     String
+  advisor   AdvisorProfile @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+  tag       Tag            @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([advisorId, tagId])
+}
+
+model Offering {
+  id          String  @id @default(cuid())
+  advisorId   String
+  advisor     AdvisorProfile @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+  title       String
+  description String
+  kind        String  @default("intro_call") // intro_call | session | async_review
+  durationMin Int     @default(30)
+  priceCents  Int     @default(0) // 0 = free mentorship; > 0 = paid consulting
+  isActive    Boolean @default(true)
+
+  bookings Booking[]
+}
+
+model AvailabilitySlot {
+  id        String   @id @default(cuid())
+  advisorId String
+  advisor   AdvisorProfile @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+  startsAt  DateTime
+  endsAt    DateTime
+
+  booking Booking?
+}
+
+model Booking {
+  id         String  @id @default(cuid())
+  offeringId String
+  offering   Offering @relation(fields: [offeringId], references: [id])
+  advisorId  String
+  advisor    AdvisorProfile @relation(fields: [advisorId], references: [id])
+  menteeId   String
+  mentee     User    @relation("MenteeBookings", fields: [menteeId], references: [id])
+
+  slotId String?           @unique
+  slot   AvailabilitySlot? @relation(fields: [slotId], references: [id])
+
+  startsAt   DateTime
+  status     String   @default("requested") // requested | confirmed | completed | cancelled | no_show
+  meetingUrl String?
+  menteeNote String?
+  // Payment seam: set once a paid offering is charged. Nothing writes it yet.
+  orderRef   String?
+  createdAt  DateTime @default(now())
+
+  review Review?
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  advisorId String
+  advisor   AdvisorProfile @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("ReviewAuthor", fields: [authorId], references: [id])
+  rating    Int // 1-5
+  body      String
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+model Event {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  title        String
+  description  String
+  type         String   @default("workshop") // workshop | ama | pitch_night | demo_day | conference | startup_week
+  source       String   @default("first_party") // first_party | partner | community | external
+  organizerName String
+  partnerId    String?
+  partner      Partner? @relation(fields: [partnerId], references: [id])
+  isOnline     Boolean  @default(true)
+  location     String   @default("Online")
+  startsAt     DateTime
+  endsAt       DateTime?
+  capacity     Int      @default(100)
+  priceCents   Int      @default(0)
+  externalUrl  String? // external events link out instead of RSVPing here
+  status       String   @default("published") // draft | published | cancelled
+
+  rsvps EventRsvp[]
+}
+
+model EventRsvp {
+  id      String @id @default(cuid())
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status  String @default("going") // going | waitlist | cancelled
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Private paid groups
+// ---------------------------------------------------------------------------
+
+model Group {
+  id            String  @id @default(cuid())
+  slug          String  @unique
+  title         String
+  description   String
+  industry      String
+  coverEmoji    String  @default("🔒")
+  color         String  @default("#6366f1")
+  ownerId       String
+  owner         User    @relation("GroupOwner", fields: [ownerId], references: [id])
+  priceCents    Int     @default(0)
+  billingPeriod String  @default("monthly") // monthly | one_time
+  memberLimit   Int     @default(50)
+  memberCount   Int     @default(0)
+  visibility    String  @default("listed") // listed | unlisted
+  status        String  @default("active") // pending_review | active | suspended
+  createdAt     DateTime @default(now())
+
+  tags        GroupTag[]
+  memberships GroupMembership[]
+  posts       GroupPost[]
+}
+
+model GroupTag {
+  groupId String
+  tagId   String
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, tagId])
+}
+
+model GroupMembership {
+  id      String @id @default(cuid())
+  groupId String
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role    String @default("member") // owner | moderator | member
+  status  String @default("active") // active | past_due | cancelled
+  // Payment seam: link to a subscription once billing exists.
+  subscriptionRef String?
+  joinedAt DateTime @default(now())
+
+  @@unique([groupId, userId])
+}
+
+model GroupPost {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  title     String?
+  body      String
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  comments GroupComment[]
+}
+
+model GroupComment {
+  id        String    @id @default(cuid())
+  postId    String
+  post      GroupPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User      @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime  @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Content — blog
+// ---------------------------------------------------------------------------
+
+model Post {
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  title          String
+  excerpt        String
+  body           String // markdown
+  coverEmoji     String    @default("📝")
+  color          String    @default("#6366f1")
+  authorId       String
+  author         User      @relation(fields: [authorId], references: [id])
+  status         String    @default("published") // draft | in_review | published
+  publishedAt    DateTime?
+  readingMinutes Int       @default(5)
+  viewCount      Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  tags PostTag[]
+}
+
+model PostTag {
+  postId String
+  tagId  String
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+}
+
+// ---------------------------------------------------------------------------
+// Content — training
+// ---------------------------------------------------------------------------
+
+model Course {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  title          String
+  summary        String
+  description    String
+  kind           String   @default("tool_training") // tool_training | program
+  level          String   @default("beginner") // beginner | intermediate | advanced
+  coverEmoji     String   @default("🎓")
+  color          String   @default("#6366f1")
+  priceCents     Int      @default(0)
+  instructorId   String
+  instructor     User     @relation("CourseInstructor", fields: [instructorId], references: [id])
+  isPublished    Boolean  @default(true)
+  lastReviewedAt DateTime @default(now()) // AI tool content dates fast — surface staleness
+  createdAt      DateTime @default(now())
+
+  lessons     Lesson[]
+  cohorts     Cohort[]
+  enrollments Enrollment[]
+}
+
+model Lesson {
+  id          String  @id @default(cuid())
+  courseId    String
+  course      Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  order       Int
+  title       String
+  body        String // markdown
+  durationMin Int     @default(10)
+  isPreview   Boolean @default(false) // one free lesson per course = conversion + SEO
+
+  progress LessonProgress[]
+
+  @@unique([courseId, order])
+}
+
+// Cohort-based programs only. Self-serve tool training has no cohorts.
+model Cohort {
+  id         String   @id @default(cuid())
+  courseId   String
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  name       String
+  startsAt   DateTime
+  endsAt     DateTime
+  capacity   Int      @default(30)
+  priceCents Int      @default(0)
+
+  enrollments Enrollment[]
+}
+
+model Enrollment {
+  id       String  @id @default(cuid())
+  courseId String
+  course   Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  cohortId String?
+  cohort   Cohort? @relation(fields: [cohortId], references: [id])
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status   String  @default("active") // active | completed | refunded
+  // Payment seam for paid courses.
+  orderRef  String?
+  createdAt DateTime @default(now())
+
+  progress LessonProgress[]
+
+  @@unique([courseId, userId])
+}
+
+model LessonProgress {
+  id           String     @id @default(cuid())
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completedAt  DateTime   @default(now())
+
+  @@unique([enrollmentId, lessonId])
+}
+
+// ---------------------------------------------------------------------------
+// Companies — shared by the portfolio and the job board
+// ---------------------------------------------------------------------------
+
+model Company {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  tagline     String
+  description String
+  websiteUrl  String?
+  logoEmoji   String  @default("🏢")
+  color       String  @default("#6366f1")
+  stage       String  @default("pre_seed") // idea | pre_seed | seed | series_a | growth
+  teamSize    String  @default("1-5")
+  sectors     String // comma-separated
+  ownerUserId String?
+  owner       User?   @relation("CompanyOwner", fields: [ownerUserId], references: [id])
+
+  isPortfolio    Boolean   @default(false)
+  portfolioBatch String?
+  announcedAt    DateTime?
+
+  jobs        Job[]
+  investments Investment[]
+  fundingApps FundingApplication[]
+}
+
+model Job {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  postedById   String
+  postedBy     User     @relation("JobPoster", fields: [postedById], references: [id])
+  title        String
+  description  String
+  roleType     String   @default("eng") // eng | design | gtm | ops | finance | other
+  employment   String   @default("full_time") // full_time | part_time | contract | intern
+  locationMode String   @default("remote") // remote | hybrid | onsite
+  location     String   @default("Remote")
+  salaryMinCents Int?
+  salaryMaxCents Int?
+  currency     String   @default("USD")
+  equityMin    Float?
+  equityMax    Float?
+  status       String   @default("open") // draft | open | closed
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  applications JobApplication[]
+}
+
+model JobApplication {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note      String
+  resumeUrl String?
+  status    String   @default("applied") // applied | reviewing | rejected | hired
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Funding
+// ---------------------------------------------------------------------------
+
+model FundingSource {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  description String
+  websiteUrl  String?
+  logoEmoji   String  @default("💰")
+  color       String  @default("#10b981")
+  kind        String  @default("vc") // vc | angel | grant | loan | accelerator | internal_fund
+  // True for our own fund. Rendered as a visible badge everywhere this source
+  // appears — we advise the same founders we may invest in, and that has to be
+  // disclosed in the UI, not buried in a policy page.
+  isInternal  Boolean @default(false)
+
+  checkSizeMinCents Int?
+  checkSizeMaxCents Int?
+  stages            String // comma-separated
+  sectors           String // comma-separated
+  geos              String @default("Global")
+
+  applicationMode String  @default("intro_request") // intro_request | external_link | internal_application
+  applyUrl        String?
+
+  applications FundingApplication[]
+  investments  Investment[]
+}
+
+model FundingApplication {
+  id        String   @id @default(cuid())
+  sourceId  String
+  source    FundingSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+  stage     String
+  askCents  Int
+  deckUrl   String?
+  blurb     String
+  status    String   @default("submitted") // draft | submitted | in_review | intro_made | passed | funded
+  staffNote String? // never included in a DTO returned to the applicant
+  createdAt DateTime @default(now())
+
+  @@unique([sourceId, userId])
+}
+
+model Investment {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sourceId   String
+  source     FundingSource @relation(fields: [sourceId], references: [id])
+  roundName  String
+  amountCents Int
+  investedAt DateTime
+  isPublic   Boolean  @default(true)
+}
+
+// ---------------------------------------------------------------------------
+// Partners
+// ---------------------------------------------------------------------------
+
+model Partner {
+  id         String @id @default(cuid())
+  slug       String @unique
+  name       String
+  blurb      String
+  websiteUrl String?
+  logoEmoji  String @default("🤝")
+  color      String @default("#6366f1")
+  tier       String @default("gold") // platinum | gold | community
+
+  offers PartnerOffer[]
+  events Event[]
+}
+
+model PartnerOffer {
+  id          String   @id @default(cuid())
+  partnerId   String
+  partner     Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  title       String
+  description String
+  kind        String   @default("credits") // credits | program | discount | tool_access | event
+  valueBlurb  String
+  eligibility String
+  applyUrl    String?
+  // true  = we collect the claim, staff approves, we forward a vetted list
+  // false = founder applies directly on the partner's own form
+  isInternalFlow Boolean @default(true)
+  startsAt    DateTime @default(now())
+  endsAt      DateTime?
+  status      String   @default("active") // active | paused | ended
+
+  claims OfferClaim[]
+}
+
+model OfferClaim {
+  id        String   @id @default(cuid())
+  offerId   String
+  offer     PartnerOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    String   @default("requested") // requested | approved | rejected | fulfilled
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@unique([offerId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// AI advisor
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("New conversation")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // user | assistant
+  content        String
+  // Which platform records the answer was grounded in, as JSON:
+  // [{ "label": "...", "href": "/questions/abc" }]
+  sources        String?
+  createdAt      DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actor      User?    @relation("NotificationActor", fields: [actorId], references: [id])
+  kind       String // answer | booking | group_post | event_reminder | application_status
+  title      String
+  href       String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+}

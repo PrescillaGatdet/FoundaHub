@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🚀 Launch Community
 
-## Getting Started
+A community platform for **AI-curious founders** — ask anything, get answers from people
+who've done it, and find mentors, funding, and events.
 
-First, run the development server:
+Built around one insight: *most new founders get stuck (on a tool, a hire, a fundraise)
+and never ask.* Launch Community makes asking the default.
+
+## What's in this MVP
+
+- **Q&A core** — ask questions, browse the feed (filter by tool/topic, sort by new or top),
+  view a question, post answers, and upvote questions & answers (one vote per user, toggleable).
+- **Mentors** — directory of experienced operators/founders/investors offering intro calls.
+- **Events** — workshops, AMAs, and pitch nights, including partner sessions (e.g. Google DevRel).
+- **Lightweight identity** — a mock current user (the seeded "You" account) so everything is
+  usable without real auth yet. Swappable later via the `uid` cookie.
+
+## Stack
+
+- **Next.js 16** (App Router, Server Actions) + **React 19** + **TypeScript**
+- **Tailwind CSS v4**
+- **Prisma 7** + **SQLite** (via the `better-sqlite3` driver adapter)
+
+## Run it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install          # also runs `prisma generate`
+npm run db:reset     # apply migrations + (re)seed demo data
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Useful scripts:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `npm run db:seed` — reseed demo content (idempotent)
+- `npm run db:reset` — drop, re-migrate, and reseed
+- `npx prisma studio` — browse the database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Project layout
 
-## Learn More
+```
+app/
+  page.tsx                # landing / home
+  questions/              # feed + [id] detail
+  ask/                    # ask a question
+  mentors/  events/       # directories
+  actions.ts              # server actions (create question/answer, vote)
+  generated/prisma/       # generated Prisma client
+components/                # NavBar, QuestionCard, VoteButton, TagChip, Avatar
+lib/                       # prisma client, session (mock auth), formatters
+prisma/                    # schema + seed
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Suggested next steps
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. **Real auth** (email/OAuth) — replace `lib/session.ts`; everything else already keys off a user.
+2. **Search** across questions, and accepting answers from the UI (author-only).
+3. **Funding** section — investor profiles + warm-intro requests.
+4. **Notifications** when your question gets an answer.
+5. **Partner showcase** — a space for firms to post new features/tools.
+6. Move SQLite → Postgres for deploy (swap the Prisma adapter).
